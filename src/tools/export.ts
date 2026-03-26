@@ -5,7 +5,7 @@
  */
 
 import type { ToolDefinition, McpToolResult, AuthCredentials } from "../types";
-import { callUpstreamTool, fetchScreenHtml } from "../stitch-client";
+import { callUpstreamTool, fetchScreenHtml, findDownloadUrl, findImageUrl, downloadText, downloadBase64 } from "../stitch-client";
 
 /** Tool definitions for export tools. */
 export const exportToolDefinitions: readonly ToolDefinition[] = [
@@ -72,6 +72,21 @@ export const exportToolDefinitions: readonly ToolDefinition[] = [
         deviceType: { type: "string", enum: ["MOBILE", "DESKTOP", "TABLET"], description: "Target device.", default: "MOBILE" },
       },
       required: ["projectId", "prompt", "trends"],
+    },
+  },
+  {
+    name: "export_all_screens",
+    description:
+      "Exports all screens from a Stitch project. Fetches each screen's HTML code and screenshot, returning a complete project export as structured data. Useful for backing up or migrating designs.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string", description: "The project ID." },
+        includeHtml: { type: "boolean", description: "Include HTML code for each screen.", default: true },
+        includeScreenshots: { type: "boolean", description: "Include base64 screenshots for each screen.", default: true },
+        maxScreens: { type: "number", description: "Maximum number of screens to export (0 = all).", default: 0 },
+      },
+      required: ["projectId"],
     },
   },
 ];
@@ -344,6 +359,119 @@ Create a visually striking, modern design that feels fresh and contemporary whil
   };
 }
 
+
+async function handleExportAllScreens(
+  args: Record<string, unknown>,
+  creds: AuthCredentials,
+  projectId?: string
+): Promise<McpToolResult> {
+  const pid = args.projectId as string;
+  const includeHtml = args.includeHtml !== false;
+  const includeScreenshots = args.includeScreenshots !== false;
+  const maxScreens = (args.maxScreens as number) ?? 0;
+
+  // List all screens
+  let screenList: Array<{ screenId: string; name?: string }> = [];
+  try {
+    const listRes = await callUpstreamTool("list_screens", { projectId: pid }, creds, projectId);
+    const listStr = JSON.stringify(listRes);
+    // Parse screen IDs and names from the response
+    const screenMatches = listStr.match(/"screenId"\s*:\s*"([^"]+)"/g);
+    const nameMatches = listStr.match(/"name"\s*:\s*"([^"]+)"/g);
+    if (screenMatches) {
+      screenList = screenMatches.map((m, i) => ({
+        screenId: m.match(/"([^"]+)"$/)?.[1] ?? "",
+        name: nameMatches?.[i]?.match(/"([^"]+)"$/)?.[1] ?? undefined,
+      })).filter((s) => s.screenId);
+    }
+  } catch (err: any) {
+    return {
+      content: [{ type: "text", text: `Failed to list screens: ${err.message}` }],
+      isError: true,
+    };
+  }
+
+  if (screenList.length === 0) {
+    return {
+      content: [{ type: "text", text: "No screens found in the project." }],
+      isError: true,
+    };
+  }
+
+  // Apply limit
+  const screensToExport = maxScreens > 0 ? screenList.slice(0, maxScreens) : screenList;
+
+  const exportedScreens: Array<{
+    screenId: string;
+    name?: string;
+    html?: string;
+    screenshot?: string;
+    error?: string;
+  }> = [];
+
+  for (const screen of screensToExport) {
+    const entry: typeof exportedScreens[0] = {
+      screenId: screen.screenId,
+      name: screen.name,
+    };
+
+    try {
+      const screenResult = await callUpstreamTool(
+        "get_screen",
+        { projectId: pid, screenId: screen.screenId },
+        creds,
+        projectId
+      );
+
+      if (includeHtml) {
+        const downloadUrl = findDownloadUrl(screenResult);
+        if (downloadUrl) {
+          entry.html = await downloadText(downloadUrl);
+        }
+      }
+
+      if (includeScreenshots) {
+        const imageUrl = findImageUrl(screenResult);
+        if (imageUrl) {
+          entry.screenshot = await downloadBase64(imageUrl);
+        }
+      }
+    } catch (err: any) {
+      entry.error = err.message;
+    }
+
+    exportedScreens.push(entry);
+  }
+
+  const successCount = exportedScreens.filter((s) => !s.error).length;
+  const failCount = exportedScreens.filter((s) => s.error).length;
+
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(
+          {
+            success: true,
+            projectId: pid,
+            exportedAt: new Date().toISOString(),
+            summary: {
+              totalScreens: screenList.length,
+              exported: successCount,
+              failed: failCount,
+              includesHtml: includeHtml,
+              includesScreenshots: includeScreenshots,
+            },
+            screens: exportedScreens,
+          },
+          null,
+          2
+        ),
+      },
+    ],
+  };
+}
+
 /**
  * Dispatches an export tool call.
  */
@@ -361,6 +489,8 @@ export async function handleExportTool(
         return await handleExportDesignSystem(args, creds, projectId);
       case "suggest_trending_design":
         return await handleSuggestTrendingDesign(args, creds, projectId);
+      case "export_all_screens":
+        return await handleExportAllScreens(args, creds, projectId);
       default:
         return { content: [{ type: "text", text: `Unknown export tool: ${name}` }], isError: true };
     }

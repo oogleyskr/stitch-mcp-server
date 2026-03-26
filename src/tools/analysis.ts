@@ -64,6 +64,22 @@ export const analysisToolDefinitions: readonly ToolDefinition[] = [
       required: ["projectId", "screenId"],
     },
   },
+  {
+    name: "design_diff",
+    description:
+      "Compares two screens by name and returns a structured diff showing added elements, removed elements, style changes, and text changes. Useful for tracking design iterations.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string", description: "The project ID." },
+        screenId1: { type: "string", description: "First screen ID (before)." },
+        screenId2: { type: "string", description: "Second screen ID (after)." },
+        includeStyleDiff: { type: "boolean", description: "Include detailed style property diffs.", default: true },
+        includeTextDiff: { type: "boolean", description: "Include text content diffs.", default: true },
+      },
+      required: ["projectId", "screenId1", "screenId2"],
+    },
+  },
 ];
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -340,6 +356,163 @@ async function handleExtractComponents(
   return { content: [{ type: "text", text: `Extracted ${components.length} components (${outputFormat} format):\n\n${output}` }] };
 }
 
+
+async function handleDesignDiff(
+  args: Record<string, unknown>,
+  creds: AuthCredentials,
+  projectId?: string
+): Promise<McpToolResult> {
+  const pid = args.projectId as string;
+  const screenId1 = args.screenId1 as string;
+  const screenId2 = args.screenId2 as string;
+  const includeStyleDiff = args.includeStyleDiff !== false;
+  const includeTextDiff = args.includeTextDiff !== false;
+
+  const [html1, html2] = await Promise.all([
+    fetchScreenHtml(pid, screenId1, creds, projectId),
+    fetchScreenHtml(pid, screenId2, creds, projectId),
+  ]);
+
+  // Extract elements by tag
+  const extractElements = (html: string): Map<string, number> => {
+    const map = new Map<string, number>();
+    const tags = html.match(/<([a-z][a-z0-9]*)/gi) ?? [];
+    for (const tag of tags) {
+      const name = tag.slice(1).toLowerCase();
+      map.set(name, (map.get(name) ?? 0) + 1);
+    }
+    return map;
+  };
+
+  // Extract text content
+  const extractTextBlocks = (html: string): string[] => {
+    return (html.replace(/<[^>]+>/g, "\n").match(/[^\n]+/g) ?? [])
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0);
+  };
+
+  // Extract style properties
+  const extractStyles = (html: string): Map<string, Set<string>> => {
+    const map = new Map<string, Set<string>>();
+    const styleMatches = html.match(/style="([^"]*)"/gi) ?? [];
+    for (const sm of styleMatches) {
+      const val = sm.match(/style="([^"]*)"/i)?.[1] ?? "";
+      const props = val.split(";").map((p) => p.trim()).filter(Boolean);
+      for (const prop of props) {
+        const [key, ...vParts] = prop.split(":");
+        if (key) {
+          const k = key.trim().toLowerCase();
+          if (!map.has(k)) map.set(k, new Set());
+          map.get(k)!.add(vParts.join(":").trim());
+        }
+      }
+    }
+    return map;
+  };
+
+  // Extract CSS classes
+  const extractClasses = (html: string): Set<string> => {
+    const classes = new Set<string>();
+    const classMatches = html.match(/class="([^"]*)"/gi) ?? [];
+    for (const cm of classMatches) {
+      const val = cm.match(/class="([^"]*)"/i)?.[1] ?? "";
+      val.split(/\s+/).filter(Boolean).forEach((c) => classes.add(c));
+    }
+    return classes;
+  };
+
+  const elements1 = extractElements(html1);
+  const elements2 = extractElements(html2);
+
+  // Element diff
+  const addedElements: Array<{ tag: string; count: number }> = [];
+  const removedElements: Array<{ tag: string; count: number }> = [];
+  const changedElements: Array<{ tag: string; before: number; after: number }> = [];
+
+  const allTags = new Set([...elements1.keys(), ...elements2.keys()]);
+  for (const tag of allTags) {
+    const c1 = elements1.get(tag) ?? 0;
+    const c2 = elements2.get(tag) ?? 0;
+    if (c1 === 0 && c2 > 0) addedElements.push({ tag, count: c2 });
+    else if (c2 === 0 && c1 > 0) removedElements.push({ tag, count: c1 });
+    else if (c1 !== c2) changedElements.push({ tag, before: c1, after: c2 });
+  }
+
+  // Style diff
+  const styleDiff: Array<{ property: string; change: string; before?: string[]; after?: string[] }> = [];
+  if (includeStyleDiff) {
+    const styles1 = extractStyles(html1);
+    const styles2 = extractStyles(html2);
+    const allProps = new Set([...styles1.keys(), ...styles2.keys()]);
+    for (const prop of allProps) {
+      const v1 = styles1.get(prop);
+      const v2 = styles2.get(prop);
+      if (!v1 && v2) {
+        styleDiff.push({ property: prop, change: "added", after: [...v2] });
+      } else if (v1 && !v2) {
+        styleDiff.push({ property: prop, change: "removed", before: [...v1] });
+      } else if (v1 && v2) {
+        const added = [...v2].filter((v) => !v1.has(v));
+        const removed = [...v1].filter((v) => !v2.has(v));
+        if (added.length > 0 || removed.length > 0) {
+          styleDiff.push({ property: prop, change: "modified", before: [...v1], after: [...v2] });
+        }
+      }
+    }
+  }
+
+  // Text diff
+  const textChanges: { added: string[]; removed: string[]; unchanged: number } = { added: [], removed: [], unchanged: 0 };
+  if (includeTextDiff) {
+    const texts1 = extractTextBlocks(html1);
+    const texts2 = extractTextBlocks(html2);
+    const set1 = new Set(texts1);
+    const set2 = new Set(texts2);
+    textChanges.added = texts2.filter((t) => !set1.has(t)).slice(0, 20);
+    textChanges.removed = texts1.filter((t) => !set2.has(t)).slice(0, 20);
+    textChanges.unchanged = texts1.filter((t) => set2.has(t)).length;
+  }
+
+  // Class diff
+  const classes1 = extractClasses(html1);
+  const classes2 = extractClasses(html2);
+  const addedClasses = [...classes2].filter((c) => !classes1.has(c)).slice(0, 20);
+  const removedClasses = [...classes1].filter((c) => !classes2.has(c)).slice(0, 20);
+
+  const totalChanges = addedElements.length + removedElements.length + changedElements.length + styleDiff.length + textChanges.added.length + textChanges.removed.length;
+
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(
+          {
+            success: true,
+            screens: { before: screenId1, after: screenId2 },
+            summary: {
+              totalChanges,
+              elementsAdded: addedElements.length,
+              elementsRemoved: removedElements.length,
+              elementsChanged: changedElements.length,
+              stylePropertiesChanged: styleDiff.length,
+              textsAdded: textChanges.added.length,
+              textsRemoved: textChanges.removed.length,
+              classesAdded: addedClasses.length,
+              classesRemoved: removedClasses.length,
+            },
+            elementDiff: { added: addedElements, removed: removedElements, changed: changedElements },
+            styleDiff: includeStyleDiff ? styleDiff : undefined,
+            textDiff: includeTextDiff ? textChanges : undefined,
+            classDiff: { added: addedClasses, removed: removedClasses },
+          },
+          null,
+          2
+        ),
+      },
+    ],
+  };
+}
+
 /**
  * Dispatches an analysis tool call.
  */
@@ -357,6 +530,8 @@ export async function handleAnalysisTool(
         return await handleCompareDesigns(args, creds, projectId);
       case "extract_components":
         return await handleExtractComponents(args, creds, projectId);
+      case "design_diff":
+        return await handleDesignDiff(args, creds, projectId);
       default:
         return { content: [{ type: "text", text: `Unknown analysis tool: ${name}` }], isError: true };
     }

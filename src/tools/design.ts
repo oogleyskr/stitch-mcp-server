@@ -103,6 +103,34 @@ export const designToolDefinitions: readonly ToolDefinition[] = [
       required: ["projectId", "screens"],
     },
   },
+  {
+    name: "generate_from_template",
+    description:
+      "Generates a screen from a predefined UI template with user customizations. Provides 10 common templates (dashboard, settings, login, profile, pricing, landing-hero, data-table, kanban-board, chat-interface, file-manager) as a base prompt, layered with custom instructions for faster UI generation.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string", description: "The project ID." },
+        template: {
+          type: "string",
+          enum: ["dashboard", "settings", "login", "profile", "pricing", "landing-hero", "data-table", "kanban-board", "chat-interface", "file-manager"],
+          description: "The base template to use.",
+        },
+        customization: {
+          type: "string",
+          description: "Custom instructions to layer on top of the template (e.g., 'use dark theme with purple accents, add a sidebar with user avatar').",
+        },
+        deviceType: { type: "string", enum: ["MOBILE", "DESKTOP", "TABLET"], description: "Target device type.", default: "DESKTOP" },
+        style: {
+          type: "string",
+          enum: ["modern", "minimal", "corporate", "playful", "elegant"],
+          description: "Overall visual style.",
+          default: "modern",
+        },
+      },
+      required: ["projectId", "template"],
+    },
+  },
 ];
 
 // ─── HTML analysis helpers ───────────────────────────────────────────────────
@@ -454,6 +482,96 @@ async function handleBatchGenerateScreens(
   };
 }
 
+
+/** Template prompt library for common UI patterns. */
+const TEMPLATE_PROMPTS: Record<string, string> = {
+  dashboard: "Create a comprehensive dashboard screen with: a top navigation bar with search and user avatar, a sidebar with navigation links (Overview, Analytics, Reports, Settings), a main content area with summary stat cards (4 cards showing key metrics with icons and trend indicators), a line chart showing activity over time, a recent activity list, and a quick actions panel. Use a clean grid layout with proper spacing.",
+
+  settings: "Create a settings page with: a left sidebar showing settings categories (Account, Notifications, Privacy, Appearance, Security, Integrations), a main panel showing the active category's options. Include toggle switches, dropdown selectors, text inputs with labels, a profile photo upload area, and save/cancel buttons at the bottom. Use clear section headings and helper text for each option.",
+
+  login: "Create a login/authentication screen with: a centered card containing the app logo, a welcome message, email and password input fields with icons, a 'Remember me' checkbox, a primary 'Sign In' button, 'Forgot password?' link, social login buttons (Google, GitHub, Apple), and a 'Don't have an account? Sign up' link at the bottom. Include subtle background decoration.",
+
+  profile: "Create a user profile page with: a hero/cover image area, a profile photo (circular, overlapping the cover), user name and bio, stats row (followers, following, posts), tab navigation (Posts, About, Photos, Connections), a content area showing the active tab. Include edit profile button, social links, and location/join date metadata.",
+
+  pricing: "Create a pricing page with: a headline and subheadline explaining the product, a toggle for monthly/annual billing, 3 pricing tier cards (Starter, Pro, Enterprise) with: tier name, price, feature list with checkmarks, a CTA button (highlighted for the recommended tier), and a 'most popular' badge on the middle card. Include FAQ section below and a comparison table link.",
+
+  "landing-hero": "Create a landing page hero section with: a bold headline with gradient or colored emphasis text, a supporting subheadline paragraph, two CTA buttons (primary 'Get Started' and secondary 'Watch Demo'), a hero image or illustration on the right side, floating social proof badges (customer count, rating), trusted-by logos row at the bottom, and a navigation bar at the top with logo and menu items.",
+
+  "data-table": "Create a data table interface with: a header with title and description, search bar and filter dropdowns, action buttons (Add New, Export, Bulk Actions), a sortable table with columns (checkbox, ID, name, status badge, date, category, actions dropdown), pagination controls at the bottom (showing items per page selector, page numbers, total count), and row hover highlighting. Include empty state and loading skeleton considerations.",
+
+  "kanban-board": "Create a kanban/project board with: a top bar with board title, view toggle (Board/List/Timeline), and filter options, multiple columns (To Do, In Progress, In Review, Done) each with a card count and add-card button, draggable task cards showing: title, priority label (color-coded), assignee avatars, due date, tag chips, and a comment count. Include a column for adding new columns.",
+
+  "chat-interface": "Create a messaging/chat interface with: a left sidebar showing conversation list with avatars, names, last message preview, timestamp, and unread badge, a main chat area with: contact header (avatar, name, status indicator, call/video buttons), message bubbles (sent and received with different alignment and colors), timestamps between message groups, a message input area with attach file, emoji picker, and send button. Include typing indicator and read receipts.",
+
+  "file-manager": "Create a file manager interface with: a left sidebar with folder tree navigation (Documents, Images, Videos, Shared, Trash), a toolbar with view toggle (grid/list), sort options, upload button, and search, a main area showing files in a grid with: file type icon/thumbnail, file name, size, modified date, and a context menu. Include breadcrumb navigation, drag-and-drop zone indicator, and storage usage bar at the bottom of the sidebar.",
+};
+
+/** Style modifier prompts. */
+const STYLE_MODIFIERS: Record<string, string> = {
+  modern: "Use a modern design with clean lines, subtle shadows, rounded corners, and a professional color palette.",
+  minimal: "Use a minimalist design with maximum whitespace, thin borders, muted colors, and focus on typography.",
+  corporate: "Use a corporate/enterprise design with structured layouts, formal typography, blue/gray palette, and data-dense UI.",
+  playful: "Use a playful design with rounded shapes, vibrant colors, fun illustrations, and friendly typography.",
+  elegant: "Use an elegant design with serif accents, refined spacing, luxury color palette (dark backgrounds with gold/cream accents), and sophisticated details.",
+};
+
+async function handleGenerateFromTemplate(
+  args: Record<string, unknown>,
+  creds: AuthCredentials,
+  projectId?: string
+): Promise<McpToolResult> {
+  const pid = args.projectId as string;
+  const template = args.template as string;
+  const customization = args.customization as string | undefined;
+  const deviceType = (args.deviceType as string) ?? "DESKTOP";
+  const style = (args.style as string) ?? "modern";
+
+  const basePrompt = TEMPLATE_PROMPTS[template];
+  if (!basePrompt) {
+    return {
+      content: [{ type: "text", text: `Unknown template: ${template}. Available: ${Object.keys(TEMPLATE_PROMPTS).join(", ")}` }],
+      isError: true,
+    };
+  }
+
+  const styleModifier = STYLE_MODIFIERS[style] ?? STYLE_MODIFIERS.modern;
+
+  let fullPrompt = basePrompt;
+  fullPrompt += "\n\n" + styleModifier;
+
+  if (customization) {
+    fullPrompt += "\n\nADDITIONAL CUSTOMIZATIONS:\n" + customization;
+  }
+
+  const result = await callUpstreamTool(
+    "generate_screen_from_text",
+    { projectId: pid, prompt: fullPrompt, deviceType },
+    creds,
+    projectId
+  );
+
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(
+          {
+            success: true,
+            message: `Screen generated from '${template}' template`,
+            template,
+            style,
+            deviceType,
+            customization: customization ?? null,
+            result,
+          },
+          null,
+          2
+        ),
+      },
+    ],
+  };
+}
+
 /**
  * Dispatches a design tool call.
  */
@@ -475,6 +593,8 @@ export async function handleDesignTool(
         return await handleGenerateResponsiveVariant(args, creds, projectId);
       case "batch_generate_screens":
         return await handleBatchGenerateScreens(args, creds, projectId);
+      case "generate_from_template":
+        return await handleGenerateFromTemplate(args, creds, projectId);
       default:
         return { content: [{ type: "text", text: `Unknown design tool: ${name}` }], isError: true };
     }

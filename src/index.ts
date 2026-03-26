@@ -9,9 +9,11 @@
  *   - Upstream (7): Proxy through to Google's Stitch MCP endpoint
  *   - Code/Build (4): Screen code/image retrieval, site building, tool listing
  *   - Workspace (3): Local project association management
- *   - Design (5): Design context extraction, application, tokens, responsive, batch
- *   - Analysis (3): Accessibility, comparison, component extraction
- *   - Export (3): Style guides, design system export, trending design
+ *   - Design (6): Design context extraction, application, tokens, responsive, batch, templates
+ *   - Analysis (4): Accessibility, comparison, component extraction, design diff
+ *   - Export (4): Style guides, design system export, trending design, bulk export
+ *   - Codegen (1): Screen-to-React component conversion
+ *   - Integration (1): Screen-to-Plane-issue bridge
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -32,6 +34,8 @@ import { workspaceToolDefinitions, handleWorkspaceTool, resolveProjectId } from 
 import { designToolDefinitions, handleDesignTool } from "./tools/design";
 import { analysisToolDefinitions, handleAnalysisTool } from "./tools/analysis";
 import { exportToolDefinitions, handleExportTool } from "./tools/export";
+import { codegenToolDefinitions, handleCodegenTool } from "./tools/codegen";
+import { integrationToolDefinitions, handleIntegrationTool } from "./tools/integration";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -54,6 +58,8 @@ const ALL_LOCAL_TOOLS: readonly ToolDefinition[] = [
   ...designToolDefinitions,
   ...analysisToolDefinitions,
   ...exportToolDefinitions,
+  ...codegenToolDefinitions,
+  ...integrationToolDefinitions,
 ];
 
 /** Set of tool names that require a projectId argument. */
@@ -78,6 +84,11 @@ const TOOLS_REQUIRING_PROJECT = new Set([
   "generate_style_guide",
   "export_design_system",
   "suggest_trending_design",
+  "screen_to_react",
+  "design_diff",
+  "screen_to_plane_issue",
+  "export_all_screens",
+  "generate_from_template",
 ]);
 
 /** Lookup sets for each tool category. */
@@ -86,6 +97,8 @@ const WORKSPACE_TOOL_NAMES = new Set(workspaceToolDefinitions.map((t) => t.name)
 const DESIGN_TOOL_NAMES = new Set(designToolDefinitions.map((t) => t.name));
 const ANALYSIS_TOOL_NAMES = new Set(analysisToolDefinitions.map((t) => t.name));
 const EXPORT_TOOL_NAMES = new Set(exportToolDefinitions.map((t) => t.name));
+const CODEGEN_TOOL_NAMES = new Set(codegenToolDefinitions.map((t) => t.name));
+const INTEGRATION_TOOL_NAMES = new Set(integrationToolDefinitions.map((t) => t.name));
 
 // ─── Main ────────────────────────────────────────────────────────────────────
 
@@ -183,6 +196,12 @@ async function main(): Promise<void> {
     }
     if (EXPORT_TOOL_NAMES.has(name)) {
       return await handleExportTool(name, args, creds, pid);
+    }
+    if (CODEGEN_TOOL_NAMES.has(name)) {
+      return await handleCodegenTool(name, args, creds, pid);
+    }
+    if (INTEGRATION_TOOL_NAMES.has(name)) {
+      return await handleIntegrationTool(name, args, creds, pid);
     }
 
     // Upstream tools (including any dynamically discovered ones)

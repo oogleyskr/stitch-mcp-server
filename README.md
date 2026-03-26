@@ -4,7 +4,7 @@ A combined MCP (Model Context Protocol) server for [Google Stitch](https://stitc
 
 ## Features
 
-- **25 tools** across 6 categories
+- **30 tools** across 8 categories
 - **Three authentication methods** (API key, access token, gcloud CLI)
 - **Workspace project management** — persist project associations per directory
 - **Design analysis** — extract design DNA, compare screens, check accessibility
@@ -54,7 +54,7 @@ For Bearer-based auth, set `GOOGLE_CLOUD_PROJECT` to include the project header.
 | `set_workspace_project` | Link a project to the current workspace |
 | `clear_workspace_project` | Remove the workspace project link |
 
-### Design Tools (5)
+### Design Tools (6)
 
 | Tool | Description |
 |------|-------------|
@@ -63,22 +63,37 @@ For Bearer-based auth, set `GOOGLE_CLOUD_PROJECT` to include the project header.
 | `generate_design_tokens` | Generate CSS vars / Tailwind config / SCSS / JSON tokens |
 | `generate_responsive_variant` | Create responsive version for a different viewport |
 | `batch_generate_screens` | Generate multiple related screens consistently |
+| `generate_from_template` | Generate screens from 10 predefined UI templates with customizations |
 
-### Analysis Tools (3)
+### Analysis Tools (4)
 
 | Tool | Description |
 |------|-------------|
 | `analyze_accessibility` | WCAG 2.1 accessibility analysis |
 | `compare_designs` | Compare two screens for design inconsistencies |
 | `extract_components` | Extract reusable components as JSON/React/HTML/Vue |
+| `design_diff` | Structured diff between two screens (elements, styles, text, classes) |
 
-### Export Tools (3)
+### Export Tools (4)
 
 | Tool | Description |
 |------|-------------|
 | `generate_style_guide` | Generate a visual style guide from a screen |
 | `export_design_system` | Export complete design system (tokens + components + docs) |
 | `suggest_trending_design` | Apply modern design trends to a prompt |
+| `export_all_screens` | Bulk export all screens (HTML + screenshots) from a project |
+
+### Codegen Tools (1)
+
+| Tool | Description |
+|------|-------------|
+| `screen_to_react` | Convert screen HTML to a React/TSX component with Tailwind CSS |
+
+### Integration Tools (1)
+
+| Tool | Description |
+|------|-------------|
+| `screen_to_plane_issue` | Generate structured Plane/PM issue data from a screen design |
 
 ## Setup
 
@@ -141,8 +156,10 @@ src/
     ├── code.ts        # Screen code/image retrieval, site building
     ├── workspace.ts   # Workspace project management
     ├── design.ts      # Design context, tokens, responsive, batch
-    ├── analysis.ts    # Accessibility, comparison, components
-    └── export.ts      # Style guides, design system export, trends
+    ├── analysis.ts    # Accessibility, comparison, components, design diff
+    ├── export.ts      # Style guides, design system export, trends, bulk export
+    ├── codegen.ts     # Screen-to-React component conversion
+    └── integration.ts # Screen-to-Plane-issue bridge
 ```
 
 ## License
