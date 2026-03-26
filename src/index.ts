@@ -14,6 +14,7 @@
  *   - Export (4): Style guides, design system export, trending design, bulk export
  *   - Codegen (1): Screen-to-React component conversion
  *   - Integration (1): Screen-to-Plane-issue bridge
+ *   - Advanced (6): Tailwind config, CSS vars, design validation, dark mode, component variants, project summary
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -36,6 +37,7 @@ import { analysisToolDefinitions, handleAnalysisTool } from "./tools/analysis";
 import { exportToolDefinitions, handleExportTool } from "./tools/export";
 import { codegenToolDefinitions, handleCodegenTool } from "./tools/codegen";
 import { integrationToolDefinitions, handleIntegrationTool } from "./tools/integration";
+import { advancedToolDefinitions, handleAdvancedTool } from "./tools/advanced";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -60,6 +62,7 @@ const ALL_LOCAL_TOOLS: readonly ToolDefinition[] = [
   ...exportToolDefinitions,
   ...codegenToolDefinitions,
   ...integrationToolDefinitions,
+  ...advancedToolDefinitions,
 ];
 
 /** Set of tool names that require a projectId argument. */
@@ -89,6 +92,12 @@ const TOOLS_REQUIRING_PROJECT = new Set([
   "screen_to_plane_issue",
   "export_all_screens",
   "generate_from_template",
+  "screen_to_tailwind_config",
+  "screen_to_css_variables",
+  "validate_design_system",
+  "generate_dark_mode",
+  "generate_component_variants",
+  "project_summary",
 ]);
 
 /** Lookup sets for each tool category. */
@@ -99,6 +108,7 @@ const ANALYSIS_TOOL_NAMES = new Set(analysisToolDefinitions.map((t) => t.name));
 const EXPORT_TOOL_NAMES = new Set(exportToolDefinitions.map((t) => t.name));
 const CODEGEN_TOOL_NAMES = new Set(codegenToolDefinitions.map((t) => t.name));
 const INTEGRATION_TOOL_NAMES = new Set(integrationToolDefinitions.map((t) => t.name));
+const ADVANCED_TOOL_NAMES = new Set(advancedToolDefinitions.map((t) => t.name));
 
 // ─── Main ────────────────────────────────────────────────────────────────────
 
@@ -202,6 +212,10 @@ async function main(): Promise<void> {
     }
     if (INTEGRATION_TOOL_NAMES.has(name)) {
       return await handleIntegrationTool(name, args, creds, pid);
+    }
+
+    if (ADVANCED_TOOL_NAMES.has(name)) {
+      return await handleAdvancedTool(name, args, creds, pid);
     }
 
     // Upstream tools (including any dynamically discovered ones)
