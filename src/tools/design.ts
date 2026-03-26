@@ -7,6 +7,7 @@
 
 import type { ToolDefinition, McpToolResult, AuthCredentials, DesignContext } from "../types";
 import { callUpstreamTool, fetchScreenHtml } from "../stitch-client";
+import { extractUnique, extractCssValues, requireString, requireNonEmptyArray } from "./helpers";
 
 /** Tool definitions for design tools. */
 export const designToolDefinitions: readonly ToolDefinition[] = [
@@ -133,19 +134,7 @@ export const designToolDefinitions: readonly ToolDefinition[] = [
   },
 ];
 
-// ─── HTML analysis helpers ───────────────────────────────────────────────────
-
-/** Extracts unique regex matches from HTML content. */
-function extractUnique(html: string, pattern: RegExp): string[] {
-  return [...new Set(html.match(pattern) ?? [])];
-}
-
-/** Extracts CSS property values from HTML. */
-function extractCssValues(html: string, property: string): string[] {
-  const regex = new RegExp(`${property}:\\s*([^;]+)`, "gi");
-  const matches = html.match(regex) ?? [];
-  return [...new Set(matches.map((m) => m.split(":")[1]?.trim()).filter(Boolean))];
-}
+// ─── HTML analysis helpers (imported from ./helpers) ────────────────────────
 
 /**
  * Extracts a full design context from HTML content.
@@ -231,8 +220,8 @@ async function handleExtractDesignContext(
   creds: AuthCredentials,
   projectId?: string
 ): Promise<McpToolResult> {
-  const pid = args.projectId as string;
-  const screenId = args.screenId as string;
+  const pid = requireString(args.projectId, "projectId");
+  const screenId = requireString(args.screenId, "screenId");
   const html = await fetchScreenHtml(pid, screenId, creds, projectId);
   const designContext = extractDesignContextFromHtml(html, pid, screenId, args);
 
@@ -431,8 +420,8 @@ async function handleBatchGenerateScreens(
   creds: AuthCredentials,
   projectId?: string
 ): Promise<McpToolResult> {
-  const pid = args.projectId as string;
-  const screens = args.screens as Array<{ name: string; prompt: string }>;
+  const pid = requireString(args.projectId, "projectId");
+  const screens = requireNonEmptyArray<{ name: string; prompt: string }>(args.screens, "screens");
   const sharedContext = args.sharedDesignContext as any;
   const deviceType = (args.deviceType as string) ?? "MOBILE";
 

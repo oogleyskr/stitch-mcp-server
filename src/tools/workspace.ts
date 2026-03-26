@@ -8,6 +8,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import type { ToolDefinition, McpToolResult, WorkspaceProject, ResolvedProject } from "../types";
+import { requireString } from "./helpers";
 
 /** Name of the local project config file. */
 const LOCAL_PROJECT_FILE = ".stitch-project.json";
@@ -196,8 +197,9 @@ export async function handleWorkspaceTool(
       }
 
       case "set_workspace_project": {
+        const validProjectId = requireString(args.projectId, "projectId");
         const projectData: WorkspaceProject = {
-          projectId: args.projectId as string,
+          projectId: validProjectId,
           projectName: (args.projectName as string) ?? null,
           lastUsed: new Date().toISOString(),
           workspacePath: process.cwd(),

@@ -5,7 +5,8 @@
  */
 
 import type { ToolDefinition, McpToolResult, AuthCredentials } from "../types";
-import { callUpstreamTool, fetchScreenHtml } from "../stitch-client";
+import { fetchScreenHtml } from "../stitch-client";
+import { extractUnique, requireString } from "./helpers";
 
 /** Tool definitions for analysis tools. */
 export const analysisToolDefinitions: readonly ToolDefinition[] = [
@@ -82,12 +83,6 @@ export const analysisToolDefinitions: readonly ToolDefinition[] = [
   },
 ];
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function extractUnique(html: string, pattern: RegExp): Set<string> {
-  return new Set(html.match(pattern) ?? []);
-}
-
 // ─── Tool handlers ───────────────────────────────────────────────────────────
 
 async function handleAnalyzeAccessibility(
@@ -95,8 +90,8 @@ async function handleAnalyzeAccessibility(
   creds: AuthCredentials,
   projectId?: string
 ): Promise<McpToolResult> {
-  const pid = args.projectId as string;
-  const screenId = args.screenId as string;
+  const pid = requireString(args.projectId, "projectId");
+  const screenId = requireString(args.screenId, "screenId");
   const level = (args.level as string) ?? "AA";
   const html = await fetchScreenHtml(pid, screenId, creds, projectId);
 
@@ -185,9 +180,9 @@ async function handleCompareDesigns(
   creds: AuthCredentials,
   projectId?: string
 ): Promise<McpToolResult> {
-  const pid = args.projectId as string;
-  const screenId1 = args.screenId1 as string;
-  const screenId2 = args.screenId2 as string;
+  const pid = requireString(args.projectId, "projectId");
+  const screenId1 = requireString(args.screenId1, "screenId1");
+  const screenId2 = requireString(args.screenId2, "screenId2");
   const compareAspects = (args.compareAspects as string[]) ?? ["colors", "typography", "spacing", "components", "layout"];
 
   const [html1, html2] = await Promise.all([
@@ -200,8 +195,8 @@ async function handleCompareDesigns(
   const recommendations: string[] = [];
 
   if (compareAspects.includes("colors")) {
-    const colors1 = extractUnique(html1, /#[0-9A-Fa-f]{3,8}\b/g);
-    const colors2 = extractUnique(html2, /#[0-9A-Fa-f]{3,8}\b/g);
+    const colors1 = new Set(extractUnique(html1, /#[0-9A-Fa-f]{3,8}\b/g));
+    const colors2 = new Set(extractUnique(html2, /#[0-9A-Fa-f]{3,8}\b/g));
     const shared = [...colors1].filter((c) => colors2.has(c));
     const only1 = [...colors1].filter((c) => !colors2.has(c));
     const only2 = [...colors2].filter((c) => !colors1.has(c));
@@ -213,8 +208,8 @@ async function handleCompareDesigns(
   }
 
   if (compareAspects.includes("typography")) {
-    const fonts1 = extractUnique(html1, /font-family:\s*[^;]+/gi);
-    const fonts2 = extractUnique(html2, /font-family:\s*[^;]+/gi);
+    const fonts1 = new Set(extractUnique(html1, /font-family:\s*[^;]+/gi));
+    const fonts2 = new Set(extractUnique(html2, /font-family:\s*[^;]+/gi));
     const shared = [...fonts1].filter((f) => fonts2.has(f));
     if (shared.length > 0) similarities.push({ aspect: "typography", detail: "Shared font families", values: shared });
     if (fonts1.size !== fonts2.size || [...fonts1].some((f) => !fonts2.has(f))) {
@@ -223,8 +218,8 @@ async function handleCompareDesigns(
   }
 
   if (compareAspects.includes("spacing")) {
-    const sp1 = extractUnique(html1, /(margin|padding|gap):\s*[^;]+/gi);
-    const sp2 = extractUnique(html2, /(margin|padding|gap):\s*[^;]+/gi);
+    const sp1 = new Set(extractUnique(html1, /(margin|padding|gap):\s*[^;]+/gi));
+    const sp2 = new Set(extractUnique(html2, /(margin|padding|gap):\s*[^;]+/gi));
     const shared = [...sp1].filter((s) => sp2.has(s));
     if (shared.length > sp1.size * 0.5) {
       similarities.push({ aspect: "spacing", detail: `${Math.round((shared.length / sp1.size) * 100)}% spacing consistency` });
@@ -267,7 +262,8 @@ async function handleCompareDesigns(
     }
   }
 
-  const consistencyScore = Math.round((similarities.length / (similarities.length + differences.length)) * 100) || 0;
+  const total = similarities.length + differences.length;
+  const consistencyScore = total > 0 ? Math.round((similarities.length / total) * 100) : 100;
 
   return {
     content: [
@@ -296,7 +292,7 @@ async function handleExtractComponents(
   // Buttons
   if (extractAll || componentTypes.includes("buttons")) {
     const matches = html.match(/<button[^>]*>[\s\S]*?<\/button>/gi) ?? [];
-    matches.slice(0, 5).forEach((btn, i) => {
+    matches.slice(0, 5).forEach((btn: string, i: number) => {
       const cls = btn.match(/class="([^"]*)"/)?.[1] ?? "";
       const style = btn.match(/style="([^"]*)"/)?.[1] ?? "";
       components.push({ type: "button", variant: `button-${i + 1}`, html: btn, classes: cls, inlineStyles: style });
@@ -306,7 +302,7 @@ async function handleExtractComponents(
   // Cards
   if (extractAll || componentTypes.includes("cards")) {
     const matches = html.match(/<[^>]*class="[^"]*card[^"]*"[^>]*>[\s\S]*?<\/[^>]+>/gi) ?? [];
-    matches.slice(0, 3).forEach((card, i) => {
+    matches.slice(0, 3).forEach((card: string, i: number) => {
       const cls = card.match(/class="([^"]*)"/)?.[1] ?? "";
       components.push({ type: "card", variant: `card-${i + 1}`, html: card.substring(0, 500) + (card.length > 500 ? "..." : ""), classes: cls });
     });
@@ -315,7 +311,7 @@ async function handleExtractComponents(
   // Inputs
   if (extractAll || componentTypes.includes("inputs")) {
     const matches = html.match(/<input[^>]*>/gi) ?? [];
-    matches.slice(0, 5).forEach((input, i) => {
+    matches.slice(0, 5).forEach((input: string, i: number) => {
       const inputType = input.match(/type="([^"]*)"/)?.[1] ?? "text";
       const cls = input.match(/class="([^"]*)"/)?.[1] ?? "";
       components.push({ type: "input", variant: inputType, html: input, classes: cls });
@@ -325,7 +321,7 @@ async function handleExtractComponents(
   // Navigation
   if (extractAll || componentTypes.includes("navigation")) {
     const matches = html.match(/<nav[^>]*>[\s\S]*?<\/nav>/gi) ?? [];
-    matches.slice(0, 2).forEach((nav, i) => {
+    matches.slice(0, 2).forEach((nav: string, i: number) => {
       const cls = nav.match(/class="([^"]*)"/)?.[1] ?? "";
       components.push({ type: "navigation", variant: `nav-${i + 1}`, html: nav.substring(0, 500) + (nav.length > 500 ? "..." : ""), classes: cls });
     });

@@ -4,7 +4,12 @@
  */
 
 import fetch from "node-fetch";
-import type { AuthCredentials, StitchJsonRpcRequest, StitchJsonRpcResponse } from "./types";
+import type {
+  AuthCredentials,
+  StitchJsonRpcRequest,
+  StitchJsonRpcResponse,
+  StitchToolDescriptor,
+} from "./types";
 import { buildHeaders } from "./auth";
 
 /** Base URL for the Stitch MCP JSON-RPC endpoint. */
@@ -14,15 +19,18 @@ const STITCH_MCP_URL =
 /** Default request timeout in milliseconds. */
 const TIMEOUT_MS = 180_000;
 
+/** Download timeout in milliseconds (shorter than RPC). */
+const DOWNLOAD_TIMEOUT_MS = 60_000;
+
 /** Monotonically increasing request ID for JSON-RPC. */
 let requestIdCounter = 1;
 
 /**
  * Sends a JSON-RPC 2.0 request to the Stitch MCP endpoint.
  *
- * @param method - JSON-RPC method name (e.g. "tools/call", "tools/list").
- * @param params - Parameters object for the RPC call.
- * @param creds  - Resolved authentication credentials.
+ * @param method    - JSON-RPC method name (e.g. "tools/call", "tools/list").
+ * @param params    - Parameters object for the RPC call.
+ * @param creds     - Resolved authentication credentials.
  * @param projectId - Optional project ID override.
  * @returns The parsed JSON-RPC response.
  * @throws On HTTP errors, timeouts, or JSON-RPC error responses.
@@ -102,41 +110,68 @@ export async function callUpstreamTool(
  *
  * @param creds     - Resolved authentication credentials.
  * @param projectId - Optional project ID override.
+ * @returns Array of tool descriptors from the upstream endpoint.
  */
 export async function listUpstreamTools(
   creds: AuthCredentials,
   projectId?: string
-): Promise<any[]> {
+): Promise<StitchToolDescriptor[]> {
   const response = await callStitchRpc("tools/list", {}, creds, projectId);
-  const result = response.result as any;
-  return result?.tools ?? [];
+  const result = response.result as Record<string, unknown> | undefined;
+  return (result?.tools ?? []) as StitchToolDescriptor[];
 }
 
 /**
  * Downloads text content from a URL (used for fetching HTML from screen download URLs).
+ * Includes a timeout to prevent hanging downloads.
  *
  * @param url - The download URL.
  */
 export async function downloadText(url: string): Promise<string> {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Download failed: HTTP ${response.status}`);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, { signal: controller.signal as any });
+    if (!response.ok) {
+      throw new Error(`Download failed: HTTP ${response.status}`);
+    }
+    return await response.text();
+  } catch (error: any) {
+    if (error.name === "AbortError") {
+      throw new Error(`Download timed out after ${DOWNLOAD_TIMEOUT_MS}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
-  return response.text();
 }
 
 /**
  * Downloads binary content from a URL and returns it as a base64-encoded string.
+ * Includes a timeout to prevent hanging downloads.
  *
  * @param url - The download URL.
  */
 export async function downloadBase64(url: string): Promise<string> {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Image download failed: HTTP ${response.status}`);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, { signal: controller.signal as any });
+    if (!response.ok) {
+      throw new Error(`Image download failed: HTTP ${response.status}`);
+    }
+    const buffer = Buffer.from(await response.arrayBuffer());
+    return buffer.toString("base64");
+  } catch (error: any) {
+    if (error.name === "AbortError") {
+      throw new Error(`Image download timed out after ${DOWNLOAD_TIMEOUT_MS}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
-  const buffer = Buffer.from(await response.arrayBuffer());
-  return buffer.toString("base64");
 }
 
 /**
@@ -191,6 +226,10 @@ export function findImageUrl(obj: unknown): string | null {
 }
 
 /**
+ * Fetches a screens
+
+
+/**
  * Fetches a screen's HTML content by calling get_screen upstream and downloading the code.
  *
  * @param projectId - The Stitch project ID.
@@ -217,4 +256,74 @@ export async function fetchScreenHtml(
   }
 
   return downloadText(url);
+}
+
+/**
+ * Safely parses screen list results from the upstream API into a typed array.
+ * Avoids fragile regex parsing of JSON strings.
+ *
+ * @param result - The raw result from callUpstreamTool("list_screens", ...).
+ * @returns An array of screen descriptors.
+ */
+export function parseScreenList(
+  result: unknown
+): ReadonlyArray<{ screenId: string; name?: string }> {
+  if (!result || typeof result !== "object") return [];
+
+  const rec = result as Record<string, unknown>;
+
+  // Pattern 1: { content: [{ text: JSON }] }
+  if (Array.isArray(rec.content)) {
+    for (const item of rec.content) {
+      if (item && typeof item === "object" && typeof (item as any).text === "string") {
+        try {
+          const parsed = JSON.parse((item as any).text);
+          const screens = extractScreensFromParsed(parsed);
+          if (screens.length > 0) return screens;
+        } catch {
+          // not JSON, try next
+        }
+      }
+    }
+  }
+
+  // Pattern 2: direct object with screens array
+  return extractScreensFromParsed(result);
+}
+
+/**
+ * Traverses a parsed API response to find screen entries.
+ */
+function extractScreensFromParsed(
+  obj: unknown
+): ReadonlyArray<{ screenId: string; name?: string }> {
+  if (!obj || typeof obj !== "object") return [];
+  const rec = obj as Record<string, unknown>;
+
+  // Look for an array property that contains screen objects
+  for (const key of ["screens", "items", "data"]) {
+    if (Array.isArray(rec[key])) {
+      return (rec[key] as any[])
+        .filter((s) => s && typeof s === "object" && typeof s.screenId === "string")
+        .map((s) => ({ screenId: s.screenId as string, name: s.name as string | undefined }));
+    }
+  }
+
+  // If the result itself is an array
+  if (Array.isArray(obj)) {
+    return (obj as any[])
+      .filter((s) => s && typeof s === "object" && typeof s.screenId === "string")
+      .map((s) => ({ screenId: s.screenId as string, name: s.name as string | undefined }));
+  }
+
+  // Fallback: regex-based extraction from stringified JSON
+  const str = JSON.stringify(obj);
+  const screenMatches = str.match(/"screenId"\s*:\s*"([^"]+)"/g);
+  if (!screenMatches) return [];
+
+  const nameMatches = str.match(/"name"\s*:\s*"([^"]+)"/g);
+  return screenMatches.map((m: string, i: number) => ({
+    screenId: (m.match(/"([^"]*)"$/) ?? ["", ""])[1],
+    name: nameMatches?.[i] ? (nameMatches[i].match(/"([^"]*)"$/) ?? ["", undefined])[1] as string | undefined : undefined,
+  })).filter((s: any) => s.screenId.length > 0);
 }

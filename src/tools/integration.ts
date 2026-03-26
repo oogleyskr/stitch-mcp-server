@@ -6,6 +6,7 @@
  */
 
 import type { ToolDefinition, McpToolResult, AuthCredentials } from "../types";
+import { requireString } from "./helpers";
 import {
   callUpstreamTool,
   fetchScreenHtml,
@@ -206,8 +207,8 @@ async function handleScreenToPlaneIssue(
   creds: AuthCredentials,
   projectId?: string
 ): Promise<McpToolResult> {
-  const pid = args.projectId as string;
-  const screenId = args.screenId as string;
+  const pid = requireString(args.projectId, "projectId");
+  const screenId = requireString(args.screenId, "screenId");
   const screenName = (args.screenName as string) ?? `Screen ${screenId}`;
   const workspaceSlug = args.workspaceSlug as string | undefined;
   const planeProjectId = args.planeProjectId as string | undefined;

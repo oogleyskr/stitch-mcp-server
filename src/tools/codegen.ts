@@ -6,6 +6,7 @@
 
 import type { ToolDefinition, McpToolResult, AuthCredentials } from "../types";
 import { fetchScreenHtml } from "../stitch-client";
+import { requireString } from "./helpers";
 
 /** Tool definitions for codegen tools. */
 export const codegenToolDefinitions: readonly ToolDefinition[] = [
@@ -260,8 +261,8 @@ async function handleScreenToReact(
   creds: AuthCredentials,
   projectId?: string
 ): Promise<McpToolResult> {
-  const pid = args.projectId as string;
-  const screenId = args.screenId as string;
+  const pid = requireString(args.projectId, "projectId");
+  const screenId = requireString(args.screenId, "screenId");
   const componentName = (args.componentName as string) ?? "Screen";
   const includeResponsive = (args.includeResponsive as boolean) ?? false;
 

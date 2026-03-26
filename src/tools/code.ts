@@ -6,6 +6,7 @@
  */
 
 import type { ToolDefinition, McpToolResult, AuthCredentials } from "../types";
+import { requireString } from "./helpers";
 import {
   callUpstreamTool,
   listUpstreamTools,
@@ -85,8 +86,8 @@ async function handleGetScreenCode(
   creds: AuthCredentials,
   projectId?: string
 ): Promise<McpToolResult> {
-  const pid = (args.projectId as string) || "";
-  const screenId = (args.screenId as string) || "";
+  const pid = requireString(args.projectId, "projectId");
+  const screenId = requireString(args.screenId, "screenId");
 
   const result = await callUpstreamTool(
     "get_screen",
@@ -115,8 +116,8 @@ async function handleGetScreenImage(
   creds: AuthCredentials,
   projectId?: string
 ): Promise<McpToolResult> {
-  const pid = (args.projectId as string) || "";
-  const screenId = (args.screenId as string) || "";
+  const pid = requireString(args.projectId, "projectId");
+  const screenId = requireString(args.screenId, "screenId");
 
   const result = await callUpstreamTool(
     "get_screen",
@@ -150,7 +151,7 @@ async function handleBuildSite(
   creds: AuthCredentials,
   projectId?: string
 ): Promise<McpToolResult> {
-  const pid = (args.projectId as string) || "";
+  const pid = requireString(args.projectId, "projectId");
   const routes = args.routes as Array<{ screenId: string; route: string }>;
 
   if (!Array.isArray(routes) || routes.length === 0) {

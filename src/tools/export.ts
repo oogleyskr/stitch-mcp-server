@@ -5,7 +5,8 @@
  */
 
 import type { ToolDefinition, McpToolResult, AuthCredentials } from "../types";
-import { callUpstreamTool, fetchScreenHtml, findDownloadUrl, findImageUrl, downloadText, downloadBase64 } from "../stitch-client";
+import { callUpstreamTool, fetchScreenHtml, findDownloadUrl, findImageUrl, downloadText, downloadBase64, parseScreenList } from "../stitch-client";
+import { extractCssValues, requireString } from "./helpers";
 
 /** Tool definitions for export tools. */
 export const exportToolDefinitions: readonly ToolDefinition[] = [
@@ -91,14 +92,6 @@ export const exportToolDefinitions: readonly ToolDefinition[] = [
   },
 ];
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function extractCssValues(html: string, property: string): string[] {
-  const regex = new RegExp(`${property}:\\s*([^;]+)`, "gi");
-  const matches = html.match(regex) ?? [];
-  return [...new Set(matches.map((m) => m.split(":")[1]?.trim()).filter(Boolean))];
-}
-
 // ─── Tool handlers ───────────────────────────────────────────────────────────
 
 async function handleGenerateStyleGuide(
@@ -106,8 +99,8 @@ async function handleGenerateStyleGuide(
   creds: AuthCredentials,
   projectId?: string
 ): Promise<McpToolResult> {
-  const pid = args.projectId as string;
-  const screenId = args.screenId as string;
+  const pid = requireString(args.projectId, "projectId");
+  const screenId = requireString(args.screenId, "screenId");
   const sections = (args.sections as string[]) ?? ["colors", "typography", "spacing", "components"];
   const format = (args.format as string) ?? "visual";
 
@@ -178,7 +171,7 @@ async function handleExportDesignSystem(
   creds: AuthCredentials,
   projectId?: string
 ): Promise<McpToolResult> {
-  const pid = args.projectId as string;
+  const pid = requireString(args.projectId, "projectId");
   let screenIds = (args.screenIds as string[]) ?? [];
   const includeTokens = args.includeTokens !== false;
   const includeComponents = args.includeComponents !== false;
@@ -189,11 +182,8 @@ async function handleExportDesignSystem(
   if (screenIds.length === 0) {
     try {
       const listRes = await callUpstreamTool("list_screens", { projectId: pid }, creds, projectId);
-      const listStr = JSON.stringify(listRes);
-      const matches = listStr.match(/screenId['"]\s*:\s*['"]([^'"]+)/g);
-      if (matches) {
-        screenIds = matches.map((m) => m.split(/['"]/)[2]).filter(Boolean).slice(0, 5);
-      }
+      const parsed = parseScreenList(listRes);
+      screenIds = parsed.map((s) => s.screenId).slice(0, 5);
     } catch {
       // proceed with empty list
     }
@@ -246,7 +236,7 @@ async function handleExportDesignSystem(
       try {
         const html = await fetchScreenHtml(pid, sid, creds, projectId);
         const buttons = html.match(/<button[^>]*>[\s\S]*?<\/button>/gi) ?? [];
-        buttons.slice(0, 2).forEach((btn) => {
+        buttons.slice(0, 2).forEach((btn: string) => {
           exportPackage.components.push({ type: "button", source: sid, html: btn });
         });
       } catch {
@@ -299,8 +289,8 @@ async function handleSuggestTrendingDesign(
   creds: AuthCredentials,
   projectId?: string
 ): Promise<McpToolResult> {
-  const pid = args.projectId as string;
-  const prompt = args.prompt as string;
+  const pid = requireString(args.projectId, "projectId");
+  const prompt = requireString(args.prompt, "prompt");
   const trends = args.trends as string[];
   const intensity = (args.intensity as string) ?? "moderate";
   const deviceType = (args.deviceType as string) ?? "MOBILE";
@@ -365,7 +355,7 @@ async function handleExportAllScreens(
   creds: AuthCredentials,
   projectId?: string
 ): Promise<McpToolResult> {
-  const pid = args.projectId as string;
+  const pid = requireString(args.projectId, "projectId");
   const includeHtml = args.includeHtml !== false;
   const includeScreenshots = args.includeScreenshots !== false;
   const maxScreens = (args.maxScreens as number) ?? 0;
@@ -374,16 +364,7 @@ async function handleExportAllScreens(
   let screenList: Array<{ screenId: string; name?: string }> = [];
   try {
     const listRes = await callUpstreamTool("list_screens", { projectId: pid }, creds, projectId);
-    const listStr = JSON.stringify(listRes);
-    // Parse screen IDs and names from the response
-    const screenMatches = listStr.match(/"screenId"\s*:\s*"([^"]+)"/g);
-    const nameMatches = listStr.match(/"name"\s*:\s*"([^"]+)"/g);
-    if (screenMatches) {
-      screenList = screenMatches.map((m, i) => ({
-        screenId: m.match(/"([^"]+)"$/)?.[1] ?? "",
-        name: nameMatches?.[i]?.match(/"([^"]+)"$/)?.[1] ?? undefined,
-      })).filter((s) => s.screenId);
-    }
+    screenList = [...parseScreenList(listRes)];
   } catch (err: any) {
     return {
       content: [{ type: "text", text: `Failed to list screens: ${err.message}` }],
